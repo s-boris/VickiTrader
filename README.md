@@ -11,8 +11,4 @@ Kraken trading bot based on calls from @VickiCryptoBot
 pip install krakenex --upgrade
 pip install TwitterAPI --upgrade
 ```
-
-5. Start the bot with
-```sh
-python vickibot.py
-```
+5. Start the bot by double clicking the run.bat file
