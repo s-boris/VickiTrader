@@ -66,8 +66,7 @@ class VickiTrader:
     def get_last_vicki_tweet(self):
         r = self.twitter_api.request('statuses/user_timeline', {'user_id': 834940874643615744})
         response = json.loads(r.text)
-        # TODO set back to 0
-        last_tweet = response[1]
+        last_tweet = response[0]
         return last_tweet
 
     def parse_tweet(self, tweet):
