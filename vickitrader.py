@@ -40,7 +40,7 @@ class VickiTrader:
             json.dump(self.appdata, open(APPDATA_FILE, 'w'))
 
         # init appdata
-        # self.check_first_start(self.get_last_vicki_tweet())
+        self.check_first_start(self.get_last_vicki_tweet())
 
         # configure Twitter API
         with open("twitter.key", 'r') as f:
