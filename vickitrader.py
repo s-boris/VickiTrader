@@ -39,9 +39,6 @@ class VickiTrader:
                             'awaiting_close': []}
             json.dump(self.appdata, open(APPDATA_FILE, 'w'))
 
-        # init appdata
-        self.check_first_start(self.get_last_vicki_tweet())
-
         # configure Twitter API
         with open("twitter.key", 'r') as f:
             self.twitter_consumer_key = f.readline().strip()
@@ -53,6 +50,9 @@ class VickiTrader:
                                       self.twitter_consumer_secret,
                                       self.twitter_access_token_key,
                                       self.twitter_access_token_secret)
+
+        # init appdata
+        self.check_first_start(self.get_last_vicki_tweet())
 
         # configure Kraken API
         self.k = kraken.Kraken()
