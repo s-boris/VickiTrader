@@ -66,7 +66,11 @@ class VickiTrader:
     def get_last_vicki_tweet(self):
         r = self.twitter_api.request('statuses/user_timeline', {'user_id': 834940874643615744})
         response = json.loads(r.text)
-        last_tweet = response[0]
+        if len(response) >= 1:
+            last_tweet = response[0]
+        else:
+            logging.debug("Error: No tweet found")
+            return {}
         return last_tweet
 
     def parse_tweet(self, tweet):
@@ -229,12 +233,13 @@ class VickiTrader:
         while True:
             last_tweet = self.get_last_vicki_tweet()
 
-            # if this is a new tweet, process it
-            if last_tweet['id'] not in self.appdata['processed_tweets']:
-                self.on_new_tweet(last_tweet)
+            if last_tweet:
+                # if this is a new tweet, process it
+                if last_tweet['id'] not in self.appdata['processed_tweets']:
+                    self.on_new_tweet(last_tweet)
 
-            # refresh orders and positions
-            self.refresh_state()
+                # refresh orders and positions
+                self.refresh_state()
             time.sleep(20)
 
 
