@@ -63,15 +63,14 @@ class VickiTrader:
             self.appdata['processed_tweets'].append(last_tweet['id'])
             json.dump(self.appdata, open(APPDATA_FILE, 'w'))
 
-    def get_last_vicki_tweet(self):
+    def get_last_vicki_tweets(self):
         r = self.twitter_api.request('statuses/user_timeline', {'user_id': 834940874643615744})
         response = json.loads(r.text)
         if len(response) >= 1:
-            last_tweet = response[0]
+            return response
         else:
             logging.debug("Error: No tweet found")
             return {}
-        return last_tweet
 
     def parse_tweet(self, tweet):
         result = {'type': '', 'pair': ''}
@@ -145,8 +144,8 @@ class VickiTrader:
         return TURN_FACTOR, OPEN_VOLUME
 
     def execute_swing(self, pair, type):
-        # check if the order we are trying to process is in conflict with another order that is being opened right now
         try:
+            # check if the order we are trying to process is in conflict with another order that is being opened right now
             if self.orders_being_processed(pair, type):
                 return False
 
@@ -264,15 +263,21 @@ class VickiTrader:
     def run(self):
         logging.info("Waiting for tweets...")
         while True:
-            last_tweet = self.get_last_vicki_tweet()
+            tweets = self.get_last_vicki_tweets()
+            scanned_tweets = 0
 
-            if last_tweet:
-                # if this is a new tweet, process it
-                if last_tweet['id'] not in self.appdata['processed_tweets']:
-                    self.on_new_tweet(last_tweet)
+            if tweets:
+                # scan the last 5 tweets (we assume the bot is not posting more than 5 tweets between our refreshes)
+                for t in reversed(tweets):
+                    scanned_tweets += 1
+                    # if this is a new tweet, process it
+                    if t['id'] not in self.appdata['processed_tweets']:
+                        self.on_new_tweet(t)
+                    if scanned_tweets >= 5:
+                        break
 
-                # refresh orders and positions
-                self.refresh_state()
+            # refresh orders and positions
+            self.refresh_state()
             time.sleep(20)
 
 
