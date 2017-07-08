@@ -52,7 +52,7 @@ class VickiTrader:
                                       self.twitter_access_token_secret)
 
         # init appdata
-        self.check_first_start(self.get_last_vicki_tweet())
+        self.check_first_start(self.get_vicki_tweets())
 
         # configure Kraken API
         self.k = kraken.Kraken()
@@ -63,7 +63,7 @@ class VickiTrader:
             self.appdata['processed_tweets'].append(last_tweet['id'])
             json.dump(self.appdata, open(APPDATA_FILE, 'w'))
 
-    def get_last_vicki_tweets(self):
+    def get_vicki_tweets(self):
         r = self.twitter_api.request('statuses/user_timeline', {'user_id': 834940874643615744})
         response = json.loads(r.text)
         if len(response) >= 1:
@@ -263,7 +263,7 @@ class VickiTrader:
     def run(self):
         logging.info("Waiting for tweets...")
         while True:
-            tweets = self.get_last_vicki_tweets()
+            tweets = self.get_vicki_tweets()
             scanned_tweets = 0
 
             if tweets:
