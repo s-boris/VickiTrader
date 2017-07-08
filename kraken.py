@@ -88,3 +88,13 @@ class Kraken:
             return {}
         else:
             return r["result"]
+
+    def get_ticker(self, pair):
+        req_data = {'pair': pair}
+        r = self.k.query_public('Ticker', req_data)
+        if r["error"]:
+            for e in r['error']:
+                logging.error("Fetching ticker failed: " + e)
+            return {}
+        else:
+            return r["result"]

@@ -131,6 +131,7 @@ class VickiTrader:
                 else:
                     # there is an open opposite position available, that we can turn
                     TURN_FACTOR = 2
+                    OPEN_VOLUME = open_positions[0]['vol']
             elif len(open_positions) > 1:
                 # multiple orders are open already. accumulate the total volume
                 for op in open_positions:
@@ -141,7 +142,7 @@ class VickiTrader:
                         "We are trying to place a " + type + " order on " + pair + " but there are already multiple orders open (Total volume: " + str(
                             OPEN_VOLUME) + "). Won't touch anything then :)")
                     return False
-        return TURN_FACTOR
+        return TURN_FACTOR, OPEN_VOLUME
 
     def execute_swing(self, pair, type):
         # check if the order we are trying to process is in conflict with another order that is being opened right now
@@ -149,29 +150,61 @@ class VickiTrader:
             if self.orders_being_processed(pair, type):
                 return False
 
-            TURN_FACTOR = self.get_turn_factor(pair, type)
+            TURN_FACTOR, OPEN_VOLUME = self.get_turn_factor(pair, type)
             if not TURN_FACTOR:
                 # it seems there is already an open position. No need to turn or place anything
                 return True
 
             b = self.k.get_balance()
             b_key = PAIRCONFIG[pair]['krakenpair'][:4]
-            effective_volume = float(b[b_key]) * PAIRCONFIG[pair]['betvolume'] * PAIRCONFIG[pair]['leverage'] * TURN_FACTOR
+            b_key2 = PAIRCONFIG[pair]['krakenpair'][4:]
+
+            if b_key in b:
+                volume_to_order = float(b[b_key]) * PAIRCONFIG[pair]['betvolume'] * PAIRCONFIG[pair]['leverage'] * TURN_FACTOR
+            elif b_key2 in b:
+                r = self.k.get_ticker(PAIRCONFIG[pair]['krakenpair'])
+                ask_price = float(r[PAIRCONFIG[pair]['krakenpair']]['a'][0])
+                ask_conversion = 1 / ask_price
+                bid_price = float(r[PAIRCONFIG[pair]['krakenpair']]['b'][0])
+                bid_conversion = 1 / bid_price
+                if type == "sell":
+                    volume_to_order = float(b[b_key2]) * (bid_conversion * 0.9) * PAIRCONFIG[pair]['betvolume'] * PAIRCONFIG[pair][
+                        'leverage'] * TURN_FACTOR
+                else:
+                    volume_to_order = float(b[b_key2]) * (ask_conversion * 0.9) * PAIRCONFIG[pair]['betvolume'] * PAIRCONFIG[pair][
+                        'leverage'] * TURN_FACTOR
+            else:
+                logging.warning(
+                    "It seems you have neither" + b_key + " not " + b_key2 + " on kraken. Please deposit or buy some if you want to trade this pair.")
+                volume_to_order = float(b[b_key]) * PAIRCONFIG[pair]['betvolume'] * PAIRCONFIG[pair]['leverage'] * TURN_FACTOR
+
+            if volume_to_order < OPEN_VOLUME:
+                # the open volume is larger than the volume we want to turn. close it first and then open a normal 100% order
+                r = self.k.create_new_order(PAIRCONFIG[pair]['krakenpair'],
+                                            type,
+                                            ORDER_TYPE,
+                                            str(OPEN_VOLUME),
+                                            str(PAIRCONFIG[pair]['leverage']))
+                if TURN_FACTOR == 2:
+                    volume_to_order = volume_to_order / 2
+                if 'txid' not in r and not r['txid']:
+                    logging.error("Could not close the open volume required for a swing... Skipping this one :/")
+                    return False
 
             r = self.k.create_new_order(PAIRCONFIG[pair]['krakenpair'],
                                         type,
                                         ORDER_TYPE,
-                                        str(effective_volume),
+                                        str(volume_to_order),
                                         str(PAIRCONFIG[pair]['leverage']))
 
             if 'txid' in r and r['txid']:
-                r['vol'] = effective_volume
+                r['vol'] = volume_to_order
                 self.appdata['awaiting_open'].append(r)
 
             json.dump(self.appdata, open(APPDATA_FILE, 'w'))
             return True
         except socket.timeout:
-            logging.error("Socked timed out, trying later...")
+            logging.debug("Socked timed out, trying later...")
 
     def on_new_tweet(self, tweet):
         logging.info(tweet['user']['screen_name'] + ": " + tweet['text'])
