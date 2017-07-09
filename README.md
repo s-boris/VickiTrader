@@ -1,5 +1,5 @@
 # VickiTrader
-Kraken trading bot based on calls from @VickiCryptoBot
+Swing trading bot for the Kraken exchange based on signals from @VickiCryptoBot
 
 
 ## Setup
