@@ -7,7 +7,7 @@ import logging
 from json import JSONDecodeError
 
 import kraken
-from TwitterAPI import TwitterAPI
+from TwitterAPI import TwitterAPI, TwitterConnectionError
 
 from config import PAIRCONFIG
 
@@ -65,13 +65,28 @@ class VickiTrader:
             json.dump(self.appdata, open(APPDATA_FILE, 'w'))
 
     def get_vicki_tweets(self):
-        r = self.twitter_api.request('statuses/user_timeline', {'user_id': 834940874643615744})
-        response = json.loads(r.text)
-        if len(response) >= 1:
-            return response[:5]
-        else:
-            logging.debug("Error: No tweet found")
-            return {}
+        try:
+            r = self.twitter_api.request('statuses/user_timeline', {'user_id': 834940874643615744})
+            response = json.loads(r.text)
+            if len(response) >= 1:
+                return response[:5]
+            else:
+                logging.debug("Error: No tweet found")
+                return {}
+        except TwitterConnectionError:
+            logging.debug("TwitterConnectionError - Reinitialize...")
+            # configure Twitter API
+            with open("twitter.key", 'r') as f:
+                self.twitter_consumer_key = f.readline().strip()
+                self.twitter_consumer_secret = f.readline().strip()
+                self.twitter_access_token_key = f.readline().strip()
+                self.twitter_access_token_secret = f.readline().strip()
+
+            self.twitter_api = TwitterAPI(self.twitter_consumer_key,
+                                          self.twitter_consumer_secret,
+                                          self.twitter_access_token_key,
+                                          self.twitter_access_token_secret)
+
 
     def parse_tweet(self, tweet):
         result = {'type': '', 'pair': ''}
