@@ -4,6 +4,7 @@ import os.path
 import time
 import json
 import logging
+from json import JSONDecodeError
 
 import kraken
 from TwitterAPI import TwitterAPI
@@ -196,11 +197,15 @@ class VickiTrader:
             return False
 
     def refresh_state(self):
-        # Check if we are waiting for an order
-        k_open_ords = self.k.get_open_orders()
 
         for ao in self.appdata['awaiting_order']:
-            k_open_pos = self.k.get_open_positions(ordertxid=ao['txid'][0])
+            # Check if we are waiting for an order
+            try:
+                k_open_ords = self.k.get_open_orders()
+                k_open_pos = self.k.get_open_positions(ordertxid=ao['txid'][0])
+            except JSONDecodeError:
+                logging.debug("JSONDecodeError - Trying again later...")
+                return False
             found_open_vol = 0
 
             if ao['txid'][0] not in k_open_ords:
