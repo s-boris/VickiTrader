@@ -60,16 +60,24 @@ class Kraken:
                 for id in result['result']:
                     if result['result'][id]['pair'] == pair:
                         found.append(result['result'][id])
-                        return found
                 # we didn't find that pair
                 if not found:
                     return {}
-            return result['result']
+                else:
+                    return found
+            if ordertxid:
+                for id in result['result']:
+                    if result['result'][id]['ordertxid'] == ordertxid:
+                        found.append(result['result'][id])
+                # we didn't find that ordertx
+                if not found:
+                    return {}
+                else:
+                    return found
+            return {}
 
-    def get_open_orders(self, txid=None):
+    def get_open_orders(self):
         req_data = {'docalcs': 'true'}
-        if txid:
-            req_data['refid'] = txid
 
         result = self.k.query_private('OpenOrders', req_data)
         dict(result)
@@ -80,6 +88,19 @@ class Kraken:
             return {}
         else:
             return result['result']['open']
+
+    def get_closed_orders(self):
+        req_data = {'docalcs': 'true'}
+
+        result = self.k.query_private('ClosedOrders', req_data)
+        dict(result)
+
+        if result['error']:
+            for e in result['error']:
+                logging.error("Fetching closed orders failed: " + e)
+            return {}
+        else:
+            return result['result']
 
     def get_balance(self):
         r = self.k.query_private('Balance')

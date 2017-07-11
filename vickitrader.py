@@ -35,8 +35,7 @@ class VickiTrader:
             self.appdata = json.load(open(APPDATA_FILE))
         else:
             self.appdata = {'processed_tweets': [],
-                            'awaiting_open': [],
-                            'awaiting_close': []}
+                            'awaiting_order': []}
             json.dump(self.appdata, open(APPDATA_FILE, 'w'))
 
         # configure Twitter API
@@ -87,80 +86,43 @@ class VickiTrader:
 
         return result
 
-    def orders_being_processed(self, pair):
-        # make sure we are not processing an opening order on this pair right now
-        for ao in self.appdata['awaiting_open']:
-            if ao == pair:
-                return True
-        # make sure we are not processing a closing order on this pair right now
-        for ac in self.appdata['awaiting_close']:
-            if ac == pair:
-                return True
-        return False
+    def on_new_tweet(self, tweet):
+        logging.info(tweet['user']['screen_name'] + ": " + tweet['text'])
+        p_tweet = self.parse_tweet(tweet['text'])
 
-    def get_position_volume(self, pair, type):
-        positions = []
-        volume = 0
-
-        open_positions = self.k.get_open_positions(pair=PAIRCONFIG[pair]['krakenpair'])
-
-        if open_positions:
-            # multiple positions are open already. accumulate the total volume
-            for op in open_positions:
-                if op['type'] == type:
-                    volume += float(op['vol'])
-                    positions.append(op)
-            return volume
+        if p_tweet['type'] and p_tweet['pair']:
+            logging.info("Detected " + p_tweet['type'] + " call on " + p_tweet['pair'] + ". Executing swing...")
+            self.execute_swing(p_tweet['pair'], p_tweet['type'])
         else:
-            return False
+            logging.info("Nothing interesting detected in this tweet")
 
-    def close_positions_if_necessary(self, pair, type):
-        # get opposite orders we might have to close first
-        open_volume = self.get_position_volume(pair, type)
-
-        if open_volume:
-            # we need to close the open positions first by countering them
-            logging.info("Closing open " + type + " positions on " + pair + "...")
-            r = self.k.create_new_order(PAIRCONFIG[pair]['krakenpair'],
-                                        type,
-                                        ORDER_TYPE,
-                                        str(open_volume),
-                                        str(PAIRCONFIG[pair]['leverage']))
-            if 'txid' in r and r['txid']:
-                r['vol'] = open_volume
-                self.appdata['awaiting_close'].append({"pair": pair, "type": type, "order": r})
-            else:
-                logging.error("Kraken was not able to execute the close order:(")
-            return True
-        return False
+        self.appdata['processed_tweets'].append(tweet['id'])
 
     def execute_swing(self, pair, type):
         try:
             # check if there are orders being processed on this pair
-            if self.orders_being_processed(pair):
-                return False
+            op = self.awaiting_order(pair)
+            if op:
+                for o in op:
+                    # try to close the orders so they don't interfere
+                    self.k.cancel_order(o['txid'])
 
+            # check if we already have an open position with this type. If so, just let it be
+            open_this_volume = self.get_position_volume(pair, type)
+            if open_this_volume > 0:
+                logging.warning(
+                    "There seems to be a " + type + " position of " + str(round(open_this_volume, 5)) + " open already. Won't touch anything.")
+                return True
+
+            # we made sure no orders are being processed and no position of the same type is open already
+            # if this is a swing, we need to add the amount needed to close it to our new swing order
             if type == "sell":
-                opposite_type = "buy"
+                opp_type = "buy"
             else:
-                opposite_type = "sell"
+                opp_type = "sell"
+            open_opp_volume = self.get_position_volume(pair, opp_type)
 
-            if self.close_positions_if_necessary(pair, opposite_type):
-                # we started a position close. wait maximum 5 minutes for it to finish
-                i = 0
-                while i < 30:
-                    time.sleep(10)
-                    i += 1
-                    self.refresh_state()
-                    if not self.orders_being_processed(pair):
-                        if self.close_positions_if_necessary(pair, opposite_type):
-                            # close order disappeared but the position is still there... fuck this
-                            return False
-                        else:
-                            # position has been closed, lets continue
-                            break
-
-            # we made sure there is no open positions or orders. we can just open our new position now
+            # calculate the new volume we want to order
             b = self.k.get_balance()
             p_key = PAIRCONFIG[pair]['krakenpair'][:4]
             s_key = PAIRCONFIG[pair]['krakenpair'][4:]
@@ -182,8 +144,14 @@ class VickiTrader:
                     volume_to_order = float(b[s_key]) * (ask_conversion * 0.9) * PAIRCONFIG[pair]['betvolume'] * PAIRCONFIG[pair]['leverage']
             else:
                 logging.warning(
-                    "It seems you have neither" + p_key + " nor " + s_key + " on kraken. Please deposit or buy some if you want to trade this pair.")
+                    "It seems you have neither" + p_key + " nor " + s_key + " on Kraken. Please deposit or buy some if you want to trade this pair.")
                 return False
+
+            if open_opp_volume > 0:
+                # we are swinging. we need to add the enough to close the opposite position
+                logging.info("Open " + opp_type + " position on " + pair + " detected. Countering it with an additional volume of " + str(
+                    round(open_opp_volume, 5)) + "...")
+                volume_to_order += open_opp_volume
 
             r = self.k.create_new_order(PAIRCONFIG[pair]['krakenpair'],
                                         type,
@@ -192,75 +160,65 @@ class VickiTrader:
                                         str(PAIRCONFIG[pair]['leverage']))
 
             if 'txid' in r and r['txid']:
-                r['vol'] = volume_to_order
-                self.appdata['awaiting_open'].append(r)
+                r['vol'] = (volume_to_order - open_opp_volume)
+                self.appdata['awaiting_order'].append(r)
                 json.dump(self.appdata, open(APPDATA_FILE, 'w'))
                 return True
             else:
-                logging.error("Kraken was not able to execute the open order :(")
+                logging.error("Kraken was not able to execute the order :(")
                 return False
 
         except socket.timeout:
             logging.debug("Socked timed out, trying later...")
 
-    def on_new_tweet(self, tweet):
-        logging.info(tweet['user']['screen_name'] + ": " + tweet['text'])
-        p_tweet = self.parse_tweet(tweet['text'])
+    def awaiting_order(self, pair):
+        found = []
+        for ao in self.appdata['awaiting_order']:
+            if ao == pair:
+                found.append(ao)
+                return ao
+        return found
 
-        if p_tweet['type'] and p_tweet['pair']:
-            logging.info("Detected " + p_tweet['type'] + " call on " + p_tweet['pair'] + ". Executing swing...")
-            r = self.execute_swing(p_tweet['pair'], p_tweet['type'])
-            if r:
-                logging.info("Swing of " + p_tweet['pair'] + " to " + p_tweet['type'] + " has been completed!")
-            else:
-                logging.error("Swing of " + p_tweet['pair'] + " to " + p_tweet['type'] + " failed! :(")
+    def get_position_volume(self, pair, type):
+        positions = []
+        volume = 0
+
+        open_positions = self.k.get_open_positions(pair=PAIRCONFIG[pair]['krakenpair'])
+
+        if open_positions:
+            # multiple positions are open already. accumulate the total volume
+            for op in open_positions:
+                if op['type'] == type:
+                    volume += float(op['vol'])
+                    positions.append(op)
+            return volume
         else:
-            logging.info("Nothing interesting detected in this tweet")
-
-        self.appdata['processed_tweets'].append(tweet['id'])
+            return False
 
     def refresh_state(self):
-        # Check if we are waiting for a position to open
-        for ao in self.appdata['awaiting_open']:
+        # Check if we are waiting for an order
+        k_open_ords = self.k.get_open_orders()
+
+        for ao in self.appdata['awaiting_order']:
             k_open_pos = self.k.get_open_positions(ordertxid=ao['txid'][0])
-            k_open_ord = self.k.get_open_orders(txid=ao['txid'][0])
             found_open_vol = 0
 
-            if ao['txid'][0] not in k_open_ord:
+            if ao['txid'][0] not in k_open_ords:
+                # check if and how much has been opened already
                 for pos in k_open_pos:
-                    if k_open_pos[pos]['ordertxid'] == ao['txid'][0]:
-                        found_open_vol += pos['vol']
-                if found_open_vol == ao['vol']:
-                    logging.info("Order [" + ao['txid'][0] + "] (Volume: " + str(ao['vol']) + ") has been fulfilled")
-                    self.appdata['awaiting_open'].remove(ao)
+                    if pos['ordertxid'] == ao['txid'][0]:
+                        found_open_vol += float(pos['vol'])
+
+                if round(found_open_vol, 4) == round(ao['vol'], 4):
+                    logging.info("Order [" + ao['txid'][0] + "] (Volume: " + str(round(ao['vol'], 4)) + ") has been fulfilled")
+                    self.appdata['awaiting_order'].remove(ao)
                 elif found_open_vol != 0:
                     logging.info(
-                        "Order [" + ao['txid'][0] + "] has been partially fulfilled (Volume: " + str(found_open_vol) + "/" + str(ao['vol']) + ")")
+                        "Order [" + ao['txid'][0] + "] has been partially fulfilled (Volume: " + str(round(found_open_vol, 4)) + "/" + str(
+                            round(ao['vol'], 4)) + ")")
                 else:
                     logging.warning("Order [" + ao['txid'][0] + "] disappeared or has not completely filled. Please check on Kraken...")
-                    self.appdata['awaiting_open'].remove(ao)
-
-        # Check if we are waiting for a position to close
-        for ac in self.appdata['awaiting_close']:
-            k_close_pos = self.k.get_open_positions(ordertxid=ac['order']['txid'][0])
-            k_close_ord = self.k.get_open_orders(txid=ac['order']['txid'][0])
-            found_close_vol = False
-
-            if not k_close_ord and not k_close_pos:
-                for pos in k_close_pos:
-                    if k_close_pos[pos]['ordertxid'] == ac['order']['txid'][0]:
-                        found_close_vol += ac['order']['vol']
-                if found_close_vol == ac['order']['vol']:
-                    logging.info("Order [" + ac['order']['txid'][0] + "] (Volume: " + str(ac['order']['vol']) + ") has been fulfilled")
-                    self.appdata['awaiting_close'].remove(ac)
-                elif found_close_vol != 0:
-                    logging.info(
-                        "Order [" + ac['order']['txid'][0] + "] has been partially fulfilled (Volume: " + str(found_close_vol) + "/" + str(
-                            ac['order']['vol']) + ")")
-                else:
-                    logging.warning(
-                        "Order [" + ac['order']['txid'][0] + "] disappeared without opening a position?! Guess we wait for the next call :/")
-                    self.appdata['awaiting_close'].remove(ac)
+                    self.appdata['awaiting_order'].remove(ao)
 
         json.dump(self.appdata, open(APPDATA_FILE, 'w'))
 
